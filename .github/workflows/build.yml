@@ -1,0 +1,84 @@
+name: Build
+
+# Só precisa de andromax.zip na raiz do repositório e deste ficheiro em
+# .github/workflows/build.yml. O workflow extrai o zip e compila.
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: Windows
+            artifact: andromax/dist/*.exe
+          - os: ubuntu-latest
+            name: Linux
+            artifact: andromax/dist/*.AppImage
+          - os: macos-latest
+            name: macOS
+            artifact: andromax/dist/*.dmg
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Extrair andromax.zip
+        shell: bash
+        run: |
+          python3 -m zipfile -e andromax.zip . || python -m zipfile -e andromax.zip .
+          ls andromax
+
+      - name: Instalar dependências
+        working-directory: andromax
+        run: npm install
+
+      - name: Lint (sintaxe)
+        working-directory: andromax
+        run: npm run lint
+
+      - name: Testes
+        working-directory: andromax
+        run: npm test
+
+      - name: Compilar instalador
+        working-directory: andromax
+        run: npm run dist
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Publicar artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: andromax-${{ matrix.name }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+
+  release:
+    name: Publicar release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Gerar checksums
+        run: cd artifacts && sha256sum * > SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
